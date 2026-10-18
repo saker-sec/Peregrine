@@ -90,9 +90,36 @@ function buildBlock (eol) {
   return HEADER.split('\n').join(eol) + renderBody(src, eol) + eol
 }
 
-function sync ({ dryRun }) {
+/** 从一段 yaml 里抠出 vaultRoot 的值（去引号）；没有则返回 null */
+function vaultRootOf (text) {
+  const m = /^\s*vaultRoot:\s*(.*)$/m.exec(text || '')
+  if (!m) return null
+  return m[1].trim().replace(/^['"]|['"]$/g, '')
+}
+
+/**
+ * 防误伤：发布版预设把 vaultRoot 留空了（每台机器自己填），
+ * 而本机补丁里存的是真实路径。一旦同步，真实路径会被空值覆盖 ——
+ * 表现就是「游隼突然说未配置 vaultRoot」，很难往同步上想。
+ * 所以这里拦一道：源为空、补丁里有值 → 除非显式 --force，否则拒绝。
+ */
+function guardVaultRoot (patchText) {
+  const fromSrc = vaultRootOf(fs.readFileSync(SRC, 'utf8'))
+  const fromPatch = vaultRootOf(patchText)
+  if (fromSrc === '' && fromPatch) {
+    throw new Error(
+      '预设源里的 vaultRoot 是空的，而本机补丁里是「' + fromPatch + '」。\n' +
+      '  同步会让它变成空值，游隼会报「未配置 vaultRoot」。\n' +
+      '  如果确实要同步（比如你就是要清空），加 --force；\n' +
+      '  否则先把 preset/peregrine/agent.cordis.yml 里的 vaultRoot 填成你的路径再同步。'
+    )
+  }
+}
+
+function sync ({ dryRun, force }) {
   if (!fs.existsSync(PATCH)) throw new Error('补丁文件不存在: ' + PATCH)
   const original = fs.readFileSync(PATCH, 'utf8')
+  if (!force) guardVaultRoot(original)
   const eol = detectEol(original)
   const lines = original.split(/\r?\n/)
 
@@ -124,8 +151,10 @@ function sync ({ dryRun }) {
 }
 
 const check = process.argv.includes('--check')
+const force = process.argv.includes('--force')
 try {
-  const r = sync({ dryRun: check })
+  // --check 只比对，不写盘，没必要拦；真正会覆盖时才拦
+  const r = sync({ dryRun: check, force: check || force })
   if (!r.changed) {
     console.log(`PASS — 补丁与真源一致（块位于第 ${r.start} 行起，${r.lines} 行）`)
     process.exit(0)
@@ -133,6 +162,14 @@ try {
   if (check) {
     console.log(`NEEDS SYNC — 补丁与真源不一致（真源 ${SRC}）`)
     console.log(`  跑 node tools/sync-preset.mjs 重新生成`)
+    // 提示风险但不在这里拦：真正执行时会拦
+    try {
+      guardVaultRoot(fs.readFileSync(PATCH, 'utf8'))
+    } catch (e) {
+      console.log('')
+      console.log('⚠ 注意：现在直接同步会把本机的 vaultRoot 清空 ——')
+      console.log('  ' + e.message.split('\n').join('\n  '))
+    }
     process.exit(1)
   }
   console.log(`已同步：第 ${r.start} 行起写入 ${r.lines} 行`)

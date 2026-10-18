@@ -10,7 +10,7 @@ plus a duplicate check against the existing library. Retrieval is **progressive*
 read) so a 20 MB vault costs a few thousand tokens instead of tens of millions. Writes to the vault
 are intercepted on the way in; evidence and session data never touch it.
 
-## 它解决的两个问题
+## 它管什么
 
 | 问题 | 里面的做法 |
 |---|---|
@@ -133,8 +133,27 @@ SAKER_HANDBOOK=<手册路径>            # 可选
 | 模式页没有「游隼模式」 | 没重启 / profile 的 bundles 没加这个包 | 补 `bundles` 再重启（预设是启动时的 revision） |
 | 挂载了但工具全无 | 宿主 `defineTool` 注入失败 | 看日志；这是预期降级路径，不算崩 |
 | 目录/检索返回空 | `vaultRoot` 没配或路径不存在 | 按上一节配置；日志会有警告 |
-| 重启后 yml 改动没生效 | 预设组合读的是 profile 补丁里的内联块 | 跑 `npm run sync`（或手动同步），再重启 |
+| 重启后 yml 改动没生效 | 预设组合读的是 profile 补丁里的**内联块** | 改完源 yml 要同步一次，再重启（见下面⚠） |
 | 改了代码但行为没变 | 复制安装不感知源码更新 | 重新 add，或 `scripts/sync_profile.py` |
+
+### ⚠ 关于同步：你的本地配置会被覆盖
+
+预设源 `preset/peregrine/agent.cordis.yml` 里 `vaultRoot` 是**空的**（发布版不能带别人的路径），
+而你的 profile 补丁里存的是**真实路径**。直接同步 = 真实路径被清空 → 游隼报「未配置 vaultRoot」。
+
+所以同步脚本有一道保护：
+
+```
+$ npm run sync
+同步失败: 预设源里的 vaultRoot 是空的，而本机补丁里是「D:\my-vault」。
+  如果确实要同步（比如你就是要清空），加 --force；
+  否则先把 preset/peregrine/agent.cordis.yml 里的 vaultRoot 填成你的路径再同步。
+```
+
+正确做法二选一：
+
+1. **先把源 yml 的 `vaultRoot` 填成你的路径**，再 `npm run sync`
+2. 或者用环境变量 `SAKER_VAULT_ROOT`，让源里的空值不算问题
 
 ---
 
@@ -222,10 +241,62 @@ L0 目录         120 条，6164 字符，约 4109 tokens
 | **写** | §6.2 §6.4 | 写的是判断流程还是原理复述 | 缺排他声明；没有判断流程；第一屏没授权提示 |
 | **测** | §6.3 | 有没有带/不带对照，有没有 avoid | 没对照；用例没正解；缺 avoid 负向断言 |
 
-每条检查都能追溯到手册原文，12 个 code：`score-below-threshold`、`decided-not-to-write`、
-`desc-no-exclusion`、`desc-no-trigger`、`desc-vague`、`no-decision-flow`、
-`no-scope-first-screen`、`no-evidence-save`、`no-negatives`、`case-no-avoid`、
-`worse-than-baseline`、`generated-file-write`。
+每条检查都能追溯到手册原文，**34 个 code**（下面按关分组，不是全部）：
+
+| 组 | code |
+| --- | --- |
+| 筛/定 | `score-below-threshold`、`decided-not-to-write`、`generated-file-write` |
+| 写（§6.2 纪律） | `no-frontmatter`、`no-decision-flow`、`principle-not-flow`、`no-scope-first-screen`、`no-evidence-save`、`no-negatives`、`evidence-not-ignored`、`too-long`、`big-table-inline` |
+| description（§6.4 四段式） | `no-description`、`desc-too-short`、`desc-no-trigger`、`desc-no-handoff`、`desc-vague` |
+| 测（§6.3 + avoid） | `no-validation`、`no-cases`、`bad-case`、`case-no-answer`、`case-missing-arm`、`worse-than-baseline` |
+| 记忆条目（§2 §3 §5） | `empty-entry`、`entry-no-anchor`、`reference-no-pointer`、`raw-copy`、`near-duplicate` |
+| **路由（§5 元数据层）** | `entry-not-routed`、`entry-routing-unconfirmed`、`routing-row-not-table`、`routing-row-shape`、`routing-row-no-utterance` |
+| **编排（§6.4 单一 owner）** | `no-owner`、`owner-conflict`、`overlay-claims-primary` |
+
+---
+
+## 入库必须同时进路由表（§5 元数据层）
+
+手册第五章说三层里的**元数据层管「怎么选」**。在这份记忆里，承担这个角色的是
+`registry/ROUTING.md` 的 **Trigger Table**。
+
+**条目写得再好，没进路由表就永远检索不到** —— 等于手册第三章那句
+「不知道何时读的知识等于没写」。
+
+所以入库时会去路由表里查：这个文件的路径或文件名出现没有？
+
+| 查的结果 | 判定 |
+| --- | --- |
+| 出现 | 放行 |
+| **确定没出现** | **block**（`entry-not-routed`）—— 自己都知道漏了 |
+| 查不了（没有 ROUTING.md） | warn（`entry-routing-unconfirmed`） |
+
+Trigger Table 一行三列：
+
+```
+| Trigger / 触发条件 | Read | What it gives you |
+| **"用户会说的口语"** | `memory/xxx.md` **§某节** | 一句话摘要 + 实测背景 |
+```
+
+**触发条件必须写成用户原话**（用引号包住）。写成文件名，AI 永远命中不了它 ——
+手册原话：「用户不会说『请调用 X』，用户会说『看看能不能盗号』」。
+
+---
+
+## 收尾自查六问（§7）
+
+落盘前用这六个问题过一遍，**任何一问答不上来就别写**：
+
+| 问 | 自查什么 | 不合格的样子 |
+| --- | --- | --- |
+| 为什么写 | 写的是 AI 不会的，还是纪律 | 抄了一遍原理 |
+| 写什么 | 该做成 Skill、五段框架，还是不写 | 什么都做成 Skill |
+| 写给谁 | description 写清楚了吗 | 描述空泛，没有触发条件 |
+| 什么时候写 | 说清什么时候别用我了吗 | 没有排他声明 |
+| 写在哪 | 放对层了吗 | 排他声明写进了 references |
+| 怎么写 | 是判断流程还是知识复述，测过吗 | 只有原理，没测过 |
+
+另加两道本库特有的闸：**进路由表了吗**、**证据进 skill 了吗**（证据应留在 case 目录）。
 
 ---
 

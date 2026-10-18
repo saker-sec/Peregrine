@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   scoreMaterial, decideForm, decideDestination, checkWriting, checkValidation,
-  checkMemoryEntry, runGates, parseFrontmatter, SCORE_THRESHOLD
+  checkMemoryEntry, checkOwners, runGates, parseFrontmatter, SCORE_THRESHOLD
 } from '../lib/gates.mjs'
 
 // ---------------------------------------------------------------- 第一关：筛
@@ -313,4 +313,98 @@ test('frontmatter：能解析折叠式 description', () => {
   assert.equal(fm.ok, true)
   assert.equal(fm.data.name, 'semicolon-path-traversal-zh')
   assert.match(fm.data.description, /分号路径穿越专项/)
+})
+
+
+// ---------------------------------------------------------------- §5 元数据层：路由登记
+
+test('路由：未确认是否登记进 ROUTING.md → warn', () => {
+  const f = checkMemoryEntry({ text: '触发：遇到 XX 形态时读。结论：……', kind: 'memory' })
+  const hit = f.find((x) => x.code === 'entry-routing-unconfirmed')
+  assert.ok(hit, '应提示确认路由表: ' + JSON.stringify(f.map((x) => x.code)))
+  assert.equal(hit.level, 'warn')
+})
+
+test('路由：已登记 → 不报', () => {
+  const f = checkMemoryEntry({ text: '触发：遇到 XX 时读。', kind: 'memory', routingRegistered: true })
+  assert.ok(!f.some((x) => x.code === 'entry-routing-unconfirmed'))
+  assert.ok(!f.some((x) => x.code === 'entry-not-routed'))
+})
+
+test('路由：明确说没登记 → block（写了也检索不到）', () => {
+  const f = checkMemoryEntry({ text: '触发：遇到 XX 时读。', kind: 'memory', routingRegistered: false })
+  const hit = f.find((x) => x.code === 'entry-not-routed')
+  assert.ok(hit, JSON.stringify(f.map((x) => x.code)))
+  assert.equal(hit.level, 'block')
+  assert.match(hit.fix, /ROUTING.md/)
+})
+
+// ---------------------------------------------------------------- §6.4 触发词表
+
+test('触发词表：三列且带引号原话 → 通过', () => {
+  const f = checkMemoryEntry({
+    text: '触发：遇到 XX 时读。',
+    kind: 'memory',
+    routingRegistered: true,
+    routingRow: '| **"这个目标怎么什么都能 200"** | `memory/a.md` | 软 404 的判据 |'
+  })
+  assert.deepEqual(f.filter((x) => x.code.startsWith('routing-row')), [])
+})
+
+test('触发词表：不是表格行 → block', () => {
+  const f = checkMemoryEntry({ text: 'x 触发：y', kind: 'memory', routingRegistered: true, routingRow: 'memory/a.md 读这个' })
+  assert.ok(f.some((x) => x.code === 'routing-row-not-table'))
+})
+
+test('触发词表：列数不足 3 → block', () => {
+  const f = checkMemoryEntry({ text: 'x 触发：y', kind: 'memory', routingRegistered: true, routingRow: '| "原话" | `a.md` |' })
+  assert.ok(f.some((x) => x.code === 'routing-row-shape'))
+})
+
+test('触发词表：没有用户原话 → warn（用户不会说"请调用 X"）', () => {
+  const f = checkMemoryEntry({ text: 'x 触发：y', kind: 'memory', routingRegistered: true, routingRow: '| 软 404 | `a.md` | 判据 |' })
+  assert.ok(f.some((x) => x.code === 'routing-row-no-utterance'))
+})
+
+// ---------------------------------------------------------------- §6.4 单一 owner
+
+test('owner：没声明 owner → warn', () => {
+  const f = checkOwners({ self: { name: 'a' }, others: [] })
+  assert.ok(f.some((x) => x.code === 'no-owner'))
+})
+
+test('owner：两个 skill 都声称自己是总控 → block', () => {
+  const f = checkOwners({
+    self: { name: 'dex-skill-router', owner: 'full-process-orchestration' },
+    others: [{ name: 'auto-pentest-router', owner: 'full-process-orchestration' }]
+  })
+  const hit = f.find((x) => x.code === 'owner-conflict')
+  assert.ok(hit, JSON.stringify(f.map((x) => x.code)))
+  assert.match(hit.message, /auto-pentest-router/)
+})
+
+test('owner：owner 不冲突 → 不报', () => {
+  const f = checkOwners({
+    self: { name: 'sqli-zh', owner: 'sqli-only' },
+    others: [{ name: 'auto-pentest-router', owner: 'full-process-orchestration' }]
+  })
+  assert.deepEqual(f, [])
+})
+
+test('owner：overlay 又声称主入口 → block', () => {
+  const f = checkOwners({ self: { name: 'triage', owner: 'x' }, others: [], overlay: true, claimsPrimary: true })
+  assert.ok(f.some((x) => x.code === 'overlay-claims-primary'))
+})
+
+test('owner：runGates 里传 owners 才会查', () => {
+  const withOwners = runGates({
+    owners: {
+      self: { name: 'a', owner: 'same' },
+      others: [{ name: 'b', owner: 'same' }]
+    }
+  })
+  assert.ok(withOwners.blockers.some((b) => b.code === 'owner-conflict'))
+
+  const without = runGates({ score: { unexpectedness: 3, elegance: 3, chain: 2, reproducibility: 2 } })
+  assert.deepEqual(without.owners, [])
 })
