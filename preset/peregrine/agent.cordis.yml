@@ -1,0 +1,248 @@
+# 游隼模式（peregrine）预设编排
+#
+# 结构与官方 standard 预设一致（包名、isolate、toolFilter 全部照抄权威来源，
+# 不靠记忆猜），差别只有三处：
+#   1. persona 换成游隼指挥官 —— 只做「该不该写、写成什么形态」的决策与派单
+#   2. 子 agent 换成游隼执行者 —— 隔离上下文、只回摘要、不许入库
+#   3. 末尾挂上游隼本体（四关 + 查重 + 渐进披露索引）
+#
+# 三条设计不变量：
+#   1. 指挥官上下文有界：默认只拿记忆库目录（L0），正文按需读（just in time）
+#   2. 入库前必查重：SimHash 粗筛 + shingle 包含度精确判定，防重复提炼
+#   3. 子 agent 隔离执行：干净上下文，只回 300 字摘要，不回灌原文
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    prefix: &peregrine_persona >-
+      你是「游隼模式」的指挥官（决策 agent），运行在 {{model}} 模型上，工作目录 {{cwd}}。
+
+      你的职责是**决定什么材料值得进记忆库、以及按什么形态进**，不是自己动手抄写。
+      读网页、读报告、做比对这类消耗上下文的事，全部委派给子 agent，
+      让它们在干净上下文里干活，只把 300 字以内的结论摘要交回给你。
+
+      你本人不整库加载记忆库：默认只看目录（L0），需要哪条再按路径去读（L2）。
+      这个仓库有近五百条条目、一万四千 k tokens，整库读进来就没有余量干活了。
+
+      纪律（来自《蒸馏 AI Skill成为Ai小子》，违反任何一条都不许入库）：
+      - AI 已经会的一律不写；写判断流程，不抄原理
+      - 排他声明只写在 description 里，写别处等于没写
+      - 没做过「带 / 不带」对照的不许入库，对照更差的直接删
+      - 排除掉的发现也要记录，否则下次重复测同一个没用的方向
+      - 入库前必须查重（peregrine_duplicate_check），已经记过的不要重复写
+
+      检索外部材料优先用 peregrine_anysearch（search / batch_search / extract）——
+      它是本模式自带的，走 peregrine_anysearch_key 配的 key，结果比原生 web_search 更结构化。
+      抓回材料后先 peregrine_duplicate_check 查重，再决定要不要入库。
+    suffix: >-
+      回复用中文，结论先行。别把整篇原文贴回给我。
+    text: *peregrine_persona
+
+- id: agent-instructions
+  name: '@deepseek-ai/dsh-agent-instructions'
+  config:
+    maxBytes: 65536
+
+# ── shell ───────────────────────────────────────────────────────────────────
+
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js process.platform === 'win32'
+
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+  disabled: !!js process.platform !== 'win32'
+
+# ── 文件与检索 ──────────────────────────────────────────────────────────────
+
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+
+- id: tool-jobs
+  name: '@deepseek-ai/dsh-tool-jobs'
+
+# ── skills ──────────────────────────────────────────────────────────────────
+
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+# ── goal ────────────────────────────────────────────────────────────────────
+
+- id: command-goal
+  name: '@deepseek-ai/dsh-command-goal'
+
+- id: tool-goal
+  name: '@deepseek-ai/dsh-tool-goal'
+
+# ── 规划（plan mode 组）─────────────────────────────────────────────────────
+
+- id: planning
+  name: cordis:group
+  group: true
+  isolate:
+    planMode: true
+  config:
+    # plan-mode 的 Config 要求非空 section，否则整条预设报
+    #   PlanModeConfig needs a non-empty `section`
+    # 而 Web 会话本来就不该以 plan 模式启动（对齐猎隼模式的做法），
+    # 所以直接禁用；要启用就删掉 disabled 并补上 section 正文。
+    - id: plan-mode
+      name: '@deepseek-ai/dsh-plan-mode'
+      disabled: true
+
+# ── 压缩（长任务必须，否则上下文撑爆）──────────────────────────────────────
+
+- id: compaction
+  name: cordis:group
+  group: true
+  isolate:
+    compaction: true
+    toolResultPruner: true
+  config:
+    - id: compaction-basic
+      name: '@deepseek-ai/dsh-compaction-basic'
+
+    - id: command-compact
+      name: '@deepseek-ai/dsh-command-compact'
+
+    - id: tool-result-pruner
+      name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+      config:
+        thresholdChars: 8192
+        headChars: 4096
+        tailChars: 1024
+
+# ── 委派：主 agent 当指挥官，指挥子 agent 干活 ─────────────────────────────
+
+- id: delegation
+  name: cordis:group
+  group: true
+  isolate:
+    workflowEngine: true
+  config:
+    - id: tool-subagent-control
+      name: '@deepseek-ai/dsh-tool-subagent-control'
+
+    - id: tool-subagent-list-agents
+      name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+
+    # 普通派单：子 agent 干净上下文执行，只回摘要
+    - id: tool-subagent
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: subagent
+        modelSelectionSettings: true
+        backgroundMode: continuable
+        maxDepth: 1
+        persona: |-
+          你是「游隼模式」的执行子 agent，不是指挥官。只做委派给你的那一件事，做完交摘要。
+
+          # 你会收到什么
+          一个具体任务（读某个网页 / 某份报告 / 某条记忆条目），
+          以及要回答的问题（通常是「这段材料的四维分值」或「这条和库里哪条重复」）。
+
+          # 硬规则
+          1. **只读被指派的范围。** 不许顺手把整个记忆库读一遍 —— 那会让你的上下文爆掉，
+             也让你的摘要失去价值。要看全局，用 peregrine_catalog 拿目录。
+          2. **只回摘要，不回原文。** 最终回复控制在 300 字内。不要粘贴网页正文、
+             不要贴命令输出、不要贴完整 JSON。
+          3. **拿不准就说拿不准。** 缺证据时明确写「未取得 X 证据」，
+             不要为了凑结论去推测。手册：没有原始证据的结论都是猜的。
+          4. **不许入库。** 你不往记忆库写任何东西，写库由指挥官负责。
+          5. 需要更多信息时，一句话说明缺什么，交给指挥官决定是否再派单。
+
+          # 输出格式（必须照这个形状回）
+          结论：<一句话>
+          依据：
+          - <依据 1>
+          - <依据 2>
+          已读：<文件路径或 URL 列表>
+          缺口：<没有就写「无」>
+        toolFilter:
+          deny:
+            - subagent
+            - subagent_fork
+            - ask_user
+
+    # 带上下文的派单：继承父会话历史，适合「接着刚才那条继续查」
+    - id: tool-subagent-fork
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: fork
+        toolName: subagent_fork
+        backgroundMode: continuable
+        maxDepth: 1
+        persona: |-
+          你是「游隼模式」的执行子 agent，不是指挥官。只做委派给你的那一件事，做完交摘要。
+
+          你和普通派单的区别是：你继承了父会话的上下文，适合「接着刚才那条继续查」。
+          但**不要因此偷懒跳过验证** —— 父会话里的结论同样需要证据支撑。
+
+          硬规则同上：只读指派范围、只回 300 字内摘要、拿不准就说拿不准、不许入库。
+
+          输出格式：
+          结论：<一句话>
+          依据：
+          - <依据 1>
+          已读：<路径或 URL 列表>
+          缺口：<没有就写「无」>
+        toolFilter:
+          deny:
+            - subagent
+            - subagent_fork
+            - ask_user
+
+# ── 交互 ────────────────────────────────────────────────────────────────────
+
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: true
+
+- id: tool-web
+  name: '@deepseek-ai/dsh-tool-web'
+  config:
+    fetch: true
+    searchTimeoutMs: 60000
+
+- id: present
+  name: '@deepseek-ai/dsh-tool-present'
+
+# ── 游隼本体：四关 + 查重 + 渐进披露索引 ───────────────────────────────────
+
+- id: peregrine
+  # 用包根而不是 /preset 子路径：
+  # 未登记进 profiles/web/package.json 的包，Desktop 对子路径解析曾报
+  #   ERR_PACKAGE_PATH_NOT_EXPORTED / not installed
+  # 包根的 "." 已指向 lib/preset.js（见 package.json），所以根就是预设插件。
+  name: 'dsh-peregrine-distill'
+  config:
+    # ↓↓↓ 这两项**每台机器自己的事**，装上之后改成你的路径（或删掉这两行、
+    #     改用环境变量 SAKER_VAULT_ROOT / SAKER_HANDBOOK）。
+    #     留空则记忆库相关能力（目录/检索/查重/团队汇总）不可用，模式仍能挂载。
+    vaultRoot: ''
+    handbookPath: ''
+    blockOnce: true
+    # 查重：SimHash 粗筛 + shingle 精确判定
+    #   nearDuplicateThreshold  海明距离，短文本自适应放宽（实测改写会到 12~27，故只作粗筛）
+    #   containmentThreshold    包含度，主判据：新材料有多少比例已被库里某条覆盖
+    #   jaccardThreshold        两篇的重合程度
+    nearDuplicateThreshold: 8
+    containmentThreshold: 0.55
+    jaccardThreshold: 0.45
+    # 渐进披露：L0 目录最多多少条（超出后靠 peregrine_search 定位）
+    catalogMaxEntries: 120

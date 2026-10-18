@@ -1,0 +1,17 @@
+# 游隼模式的 bundle 补丁 —— **故意不再声明任何行**。
+#
+# 原因：预设现在由 profile 的 cordis.patch.yml 直接声明
+#     - id: preset-peregrine
+#       name: '@deepseek-ai/dsh-agent-preset'
+# 与内置 standard / ptc / minimal / cordis 四个预设用同一套机制。
+#
+# 如果这里再声明一次，一旦本包被登记进 dsh.profile.bundles，
+# 就会出现同一个 id 注册两次：
+#     Error: Duplicate agent preset: peregrine
+#
+# 所以「谁声明预设」只有一个 owner —— profile 补丁。
+# 本文件为兼容 dsh.bundle.patch 字段而保留，但内容为空。
+#
+# 历史：2026-10-17 之前这里用 `dsh-peregrine-distill/preset-root`
+# 调 agentPresets.register()，实测未生效（预设未出现在模式选择页），
+# 已改用官方的 @deepseek-ai/dsh-agent-preset 声明式路径。

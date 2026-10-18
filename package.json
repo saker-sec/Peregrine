@@ -1,0 +1,67 @@
+{
+  "name": "dsh-peregrine-distill",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "游隼模式 (Peregrine): a commander/executor knowledge-intake preset for DeepSeek Harness — four distill gates, SimHash+shingle deduplication, progressive-disclosure vault indexing, team merge reports, and per-machine anysearch key management.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/saker-sec/Peregrine.git"
+  },
+  "bugs": {
+    "url": "https://github.com/saker-sec/Peregrine/issues"
+  },
+  "homepage": "https://github.com/saker-sec/Peregrine#readme",
+  "main": "./lib/preset.js",
+  "exports": {
+    ".": "./lib/preset.js",
+    "./preset": "./lib/preset.js",
+    "./preset-root": "./lib/preset-root.js",
+    "./legacy": "./lib/index.js",
+    "./gates": "./lib/gates.mjs",
+    "./material": "./lib/material.mjs",
+    "./simhash": "./lib/simhash.mjs",
+    "./catalog": "./lib/catalog.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/**/*.js",
+    "lib/**/*.mjs",
+    "preset/**",
+    "prompt/**",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dshx": {
+    "contributes": {
+      "tools": [
+        "peregrine_duplicate_check",
+        "peregrine_catalog",
+        "peregrine_read",
+        "peregrine_search",
+        "peregrine_gate",
+        "peregrine_merge",
+        "peregrine_rubric",
+        "peregrine_anysearch_key",
+        "peregrine_anysearch"
+      ],
+      "skills": []
+    }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "test": "node --test test/gates.test.mjs test/plugin.test.mjs test/material.test.mjs test/simhash.test.mjs test/catalog.test.mjs test/preset.test.mjs test/anysearch.test.mjs test/sync-preset.test.mjs test/merge.test.mjs",
+    "bake": "node tools/bake.mjs bake",
+    "bake:check": "node tools/bake.mjs check",
+    "sync": "node tools/sync-preset.mjs",
+    "sync:check": "node tools/sync-preset.mjs --check",
+    "merge": "node tools/merge.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
